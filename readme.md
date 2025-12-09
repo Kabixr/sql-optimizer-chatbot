@@ -14,7 +14,8 @@ Deploy on Streamlit Cloud:
 ## 🚀 Try It in Google Colab  
 Run the full notebook with one click:
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](YOUR_COLAB_LINK_HERE)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Kabixr/sql-optimizer-chatbot/blob/main/sql_optimizer_demo.ipynb)
+
 
 ---
 
