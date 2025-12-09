@@ -5,7 +5,7 @@ Created by **Kabir Puri** (Data Analytics & AI/ML Professional)
 ---
 
 ## 🔥 Live Demo
-Deploy on Streamlit Cloud:
+Streamlit Cloud:
 
 [![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://sql-optimizer-chatbot-d5khy9cxxdfsd7bx5btmtk.streamlit.app/)
 
