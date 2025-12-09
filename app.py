@@ -24,7 +24,6 @@ st.subheader("LLM-powered SQL explainer + index advisor + rewrite engine")
 st.markdown(
     """
 This tool analyzes your SQL query, suggests indexes, proposes safe rewrites, and optionally provides a polished optimization plan using OpenAI.
-**AI features are enabled only if an OpenAI API key is configured in Streamlit Secrets.**
 """
 )
 
