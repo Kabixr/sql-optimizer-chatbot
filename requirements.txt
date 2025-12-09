@@ -4,4 +4,4 @@ sql_metadata
 sqlglot
 pandas
 numpy
-openai
+openai>=1.0.0
