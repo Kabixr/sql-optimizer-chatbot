@@ -8,12 +8,11 @@ import re
 import json
 import os
 
-# Optional OpenAI
-use_openai = False
+# New OpenAI client import (v1.0+)
 try:
-    import openai
-except:
-    pass
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
 
 # ------------------------------
 # UI SETUP
@@ -22,49 +21,52 @@ st.set_page_config(page_title="SQL Query Optimizer Chatbot | Kabir Puri", layout
 st.title("⚡ SQL Query Optimizer Chatbot")
 st.subheader("LLM-powered SQL explainer + index advisor + rewrite engine")
 
-st.markdown("""
-This tool analyzes your SQL query, explains what it does, detects performance problems, 
-suggests indexes, proposes rewrites, and optionally generates polished explanations using OpenAI.
+st.markdown(
+    """
+This tool analyzes your SQL query, suggests indexes, proposes safe rewrites, and optionally provides a polished optimization plan using OpenAI.
+**AI features are enabled only if an OpenAI API key is configured in Streamlit Secrets.**
+"""
+)
 
-**Created by: Kabir Puri**  
-**Specialization:** SQL Optimization, AI/ML, Data Engineering
-""")
+# ---------- OPENAI SECRETS (no input box) ----------
+use_openai = False
+client = None
+
+if OpenAI is None:
+    st.warning("OpenAI client library not available. Ensure `openai>=1.0.0` is listed in requirements.txt.")
+else:
+    if "OPENAI_API_KEY" in st.secrets:
+        try:
+            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+            use_openai = True
+            st.success("AI Mode: Enabled")
+        except Exception as e:
+            use_openai = False
+            st.error(f"Failed to initialize OpenAI client: {e}")
+    else:
+        st.info("AI Mode: Disabled — add OPENAI_API_KEY in Streamlit Secrets to enable polished explanations.")
 
 # ------------------------------
 # INPUT SECTION
 # ------------------------------
-
 sql_input = st.text_area("Paste your SQL query here:", height=200)
 
 uploaded_files = st.file_uploader(
     "Upload optional CSV or DDL (.sql) files to build a temporary SQLite database (optional for EXPLAIN).",
     type=["csv", "sql"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
 )
-
-openai_key = st.text_input("OpenAI API Key (optional)", type="password")
-
-if openai_key:
-    try:
-        openai.api_key = openai_key
-        use_openai = True
-        st.success("OpenAI enabled.")
-    except Exception as e:
-        st.error(f"Error initializing OpenAI: {e}")
-        use_openai = False
-
 
 # ------------------------------
 # FUNCTIONS
 # ------------------------------
-
 def parse_sql(user_sql):
     """Extract tables, columns, where columns, joins, etc."""
     try:
         parser = Parser(user_sql)
         tables = parser.tables
         columns = parser.columns
-        where_cols = parser.columns_dict.get('where', [])
+        where_cols = parser.columns_dict.get("where", [])
         return tables, columns, where_cols
     except Exception:
         return [], [], []
@@ -75,30 +77,35 @@ def recommend_indexes(tables, columns, where_cols):
     suggestions = []
     index_recs = []
 
-    # Basic suggestions
-    suggestions.append("Avoid SELECT *; specify only required columns.")
-    suggestions.append("Add LIMIT for exploration queries.")
-    suggestions.append("Ensure JOIN conditions use indexed columns.")
+    suggestions.append("Avoid SELECT * in production; list required columns to reduce IO.")
+    suggestions.append("Use LIMIT for exploratory queries to avoid large result sets.")
+    suggestions.append("Prefer explicit JOIN types and ensure join/filter columns are indexed where appropriate.")
 
+    # Basic heuristics for each table
     for t in tables:
         candidate_cols = []
 
-        # WHERE columns
+        # add WHERE columns that reference this table (or generic filter columns)
         for c in where_cols:
-            candidate_cols.append(c.split('.')[-1])
-
-        # ususal suspects
-        for c in ["id", "user_id", "created_at"]:
-            if c in columns:
+            # c might be "table.col" or "col"
+            if "." in c:
+                table_part, col_part = c.split(".", 1)
+                if table_part.lower() == t.lower():
+                    candidate_cols.append(col_part)
+            else:
                 candidate_cols.append(c)
 
+        # Add common id/time columns if present in parsed columns
+        for cc in ["id", "user_id", "created_at", "updated_at"]:
+            if cc in columns and cc not in candidate_cols:
+                candidate_cols.append(cc)
+
+        # Limit to unique top-3 columns
         candidate_cols = list(dict.fromkeys(candidate_cols))[:3]
 
         if candidate_cols:
             index_recs.append({"table": t, "columns": candidate_cols})
-            suggestions.append(
-                f"Consider index on `{t}({', '.join(candidate_cols)})` for filtering."
-            )
+            suggestions.append(f"Consider index on `{t}({', '.join(candidate_cols)})` for filtering and joins.")
 
     return suggestions, index_recs
 
@@ -108,14 +115,17 @@ def run_sqlite_explain(user_sql, uploaded_files):
     conn = sqlite3.connect("temp.sqlite")
 
     for file in uploaded_files:
-        if file.name.endswith(".csv"):
-            df = pd.read_csv(file)
-            tname = os.path.splitext(file.name)[0]
-            df.to_sql(tname, conn, if_exists='replace', index=False)
-
-        elif file.name.endswith(".sql"):
-            ddl = file.read().decode("utf-8")
-            conn.executescript(ddl)
+        try:
+            if file.name.lower().endswith(".csv"):
+                df = pd.read_csv(file)
+                tname = os.path.splitext(file.name)[0]
+                df.to_sql(tname, conn, if_exists="replace", index=False)
+            elif file.name.lower().endswith(".sql"):
+                ddl = file.read().decode("utf-8")
+                conn.executescript(ddl)
+        except Exception as e:
+            # continue on error for any single file
+            st.warning(f"Failed to load {file.name}: {e}")
 
     try:
         cur = conn.cursor()
@@ -127,20 +137,22 @@ def run_sqlite_explain(user_sql, uploaded_files):
 
 
 def produce_openai_explanation(sql, suggestions, indexes):
-    """Polished explanation with OpenAI."""
-    prompt = f"""
-You are a senior SQL performance engineer. Analyze the user SQL and provide:
+    """Polished explanation using new OpenAI API surface."""
+    if not use_openai or client is None:
+        return "OpenAI not configured. To enable polished explanations, add OPENAI_API_KEY to Streamlit Secrets."
 
-1. What the query is doing.
-2. The top performance risks.
-3. 3–6 prioritized optimization steps.
-4. Example CREATE INDEX statements.
-5. A validation checklist.
+    prompt = f"""
+You are a senior SQL performance engineer. Analyze this SQL query and provide:
+1) A concise description of what the query does.
+2) Top performance risks and why.
+3) A prioritized optimization plan (3–6 steps).
+4) Example CREATE INDEX statements where relevant.
+5) A short validation checklist to confirm improvements.
 
 SQL:
 {sql}
 
-Suggestions:
+Heuristic suggestions:
 {json.dumps(suggestions)}
 
 Index recommendations:
@@ -148,12 +160,13 @@ Index recommendations:
 """
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=500,
+            max_tokens=600,
         )
-        return response["choices"][0]["message"]["content"]
+        # New response structure: choices[0].message.content
+        return response.choices[0].message.content
     except Exception as e:
         return f"OpenAI error: {e}"
 
@@ -161,7 +174,6 @@ Index recommendations:
 # ------------------------------
 # ANALYSIS EXECUTION
 # ------------------------------
-
 if st.button("Analyze SQL"):
     if not sql_input.strip():
         st.error("Please paste an SQL query.")
@@ -170,7 +182,7 @@ if st.button("Analyze SQL"):
     st.header("🔍 SQL Analysis Results")
 
     # Normalize
-    formatted_sql = sqlparse.format(sql_input, reindent=True, keyword_case='upper')
+    formatted_sql = sqlparse.format(sql_input, reindent=True, keyword_case="upper")
     st.subheader("Formatted Query")
     st.code(formatted_sql, language="sql")
 
@@ -195,8 +207,9 @@ if st.button("Analyze SQL"):
 
     st.subheader("📌 Index Recommendations")
     for rec in index_recs:
-        st.code(f"CREATE INDEX idx_{rec['table']}_{'_'.join(rec['columns'])} "
-                f"ON {rec['table']}({', '.join(rec['columns'])});")
+        st.code(
+            f"CREATE INDEX idx_{rec['table']}_{'_'.join(rec['columns'])} ON {rec['table']}({', '.join(rec['columns'])});"
+        )
 
     # Optional SQLite EXPLAIN
     if uploaded_files:
@@ -209,7 +222,7 @@ if st.button("Analyze SQL"):
         st.subheader("✨ Polished Explanation (AI)")
         explanation = produce_openai_explanation(sql_input, suggestions, index_recs)
         st.write(explanation)
+    else:
+        st.info("Polished AI explanation unavailable. Set OPENAI_API_KEY in Streamlit Secrets to enable.")
 
     st.success("Analysis complete!")
-
-
