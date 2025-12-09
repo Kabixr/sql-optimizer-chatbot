@@ -19,15 +19,25 @@ except Exception:
 # ------------------------------
 st.set_page_config(page_title="SQL Query Optimizer Chatbot | Kabir Puri", layout="wide")
 st.title("⚡ SQL Query Optimizer Chatbot")
+
+# 🔥 GOLD SIGNATURE (Option 1)
+st.markdown("""
+<div style='padding:8px 0; font-size:22px; font-weight:700;
+            color:#f5c542; letter-spacing:1px;'>
+✨ Created by <span style='color:#ffd86b;'>Kabir Puri</span>
+</div>
+""", unsafe_allow_html=True)
+
 st.subheader("LLM-powered SQL explainer + index advisor + rewrite engine")
 
 st.markdown(
     """
-This tool analyzes your SQL query, suggests indexes, proposes safe rewrites, and optionally provides a polished optimization plan using OpenAI.
+This tool analyzes your SQL query, suggests indexes, proposes safe rewrites,  
+and optionally provides a polished optimization plan using OpenAI.
 """
 )
 
-# ---------- OPENAI SECRETS (no input box) ----------
+# ---------- OPENAI SECRETS ----------
 use_openai = False
 client = None
 
@@ -80,13 +90,10 @@ def recommend_indexes(tables, columns, where_cols):
     suggestions.append("Use LIMIT for exploratory queries to avoid large result sets.")
     suggestions.append("Prefer explicit JOIN types and ensure join/filter columns are indexed where appropriate.")
 
-    # Basic heuristics for each table
     for t in tables:
         candidate_cols = []
 
-        # add WHERE columns that reference this table (or generic filter columns)
         for c in where_cols:
-            # c might be "table.col" or "col"
             if "." in c:
                 table_part, col_part = c.split(".", 1)
                 if table_part.lower() == t.lower():
@@ -94,12 +101,10 @@ def recommend_indexes(tables, columns, where_cols):
             else:
                 candidate_cols.append(c)
 
-        # Add common id/time columns if present in parsed columns
         for cc in ["id", "user_id", "created_at", "updated_at"]:
             if cc in columns and cc not in candidate_cols:
                 candidate_cols.append(cc)
 
-        # Limit to unique top-3 columns
         candidate_cols = list(dict.fromkeys(candidate_cols))[:3]
 
         if candidate_cols:
@@ -123,7 +128,6 @@ def run_sqlite_explain(user_sql, uploaded_files):
                 ddl = file.read().decode("utf-8")
                 conn.executescript(ddl)
         except Exception as e:
-            # continue on error for any single file
             st.warning(f"Failed to load {file.name}: {e}")
 
     try:
@@ -136,9 +140,9 @@ def run_sqlite_explain(user_sql, uploaded_files):
 
 
 def produce_openai_explanation(sql, suggestions, indexes):
-    """Polished explanation using new OpenAI API surface."""
+    """Polished explanation using new OpenAI API."""
     if not use_openai or client is None:
-        return "OpenAI not configured. To enable polished explanations, add OPENAI_API_KEY to Streamlit Secrets."
+        return "OpenAI not configured. Add OPENAI_API_KEY to Streamlit Secrets."
 
     prompt = f"""
 You are a senior SQL performance engineer. Analyze this SQL query and provide:
@@ -146,7 +150,7 @@ You are a senior SQL performance engineer. Analyze this SQL query and provide:
 2) Top performance risks and why.
 3) A prioritized optimization plan (3–6 steps).
 4) Example CREATE INDEX statements where relevant.
-5) A short validation checklist to confirm improvements.
+5) A short validation checklist.
 
 SQL:
 {sql}
@@ -164,7 +168,6 @@ Index recommendations:
             messages=[{"role": "user", "content": prompt}],
             max_tokens=600,
         )
-        # New response structure: choices[0].message.content
         return response.choices[0].message.content
     except Exception as e:
         return f"OpenAI error: {e}"
@@ -180,12 +183,10 @@ if st.button("Analyze SQL"):
 
     st.header("🔍 SQL Analysis Results")
 
-    # Normalize
     formatted_sql = sqlparse.format(sql_input, reindent=True, keyword_case="upper")
     st.subheader("Formatted Query")
     st.code(formatted_sql, language="sql")
 
-    # Parse
     tables, columns, where_cols = parse_sql(sql_input)
 
     st.subheader("Detected Tables")
@@ -197,7 +198,6 @@ if st.button("Analyze SQL"):
     st.subheader("WHERE Columns")
     st.write(where_cols)
 
-    # Recommendations
     suggestions, index_recs = recommend_indexes(tables, columns, where_cols)
 
     st.subheader("💡 Optimization Suggestions")
@@ -210,18 +210,16 @@ if st.button("Analyze SQL"):
             f"CREATE INDEX idx_{rec['table']}_{'_'.join(rec['columns'])} ON {rec['table']}({', '.join(rec['columns'])});"
         )
 
-    # Optional SQLite EXPLAIN
     if uploaded_files:
         st.subheader("🧪 SQLite EXPLAIN QUERY PLAN")
         rows = run_sqlite_explain(sql_input, uploaded_files)
         st.write(rows)
 
-    # Optional OpenAI polishing
     if use_openai:
         st.subheader("✨ Polished Explanation (AI)")
         explanation = produce_openai_explanation(sql_input, suggestions, index_recs)
         st.write(explanation)
     else:
-        st.info("Polished AI explanation unavailable. Set OPENAI_API_KEY in Streamlit Secrets to enable.")
+        st.info("Polished AI explanation unavailable — add OPENAI_API_KEY in Secrets.")
 
     st.success("Analysis complete!")
