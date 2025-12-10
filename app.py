@@ -136,34 +136,78 @@ def parse_sql(user_sql):
 
 
 def recommend_indexes(tables, columns, where_cols):
-    """Heuristic index suggestions."""
+    """
+    Heuristic index suggestions.
+    - Handles nested list/tuple results from parsers.
+    - Normalizes values to strings and deduplicates while preserving order.
+    """
     suggestions = []
     index_recs = []
 
+    # Generic useful suggestions
     suggestions.append("Avoid SELECT * in production; list required columns to reduce IO.")
     suggestions.append("Use LIMIT for exploratory queries to avoid large result sets.")
     suggestions.append("Prefer explicit JOIN types and ensure join/filter columns are indexed where appropriate.")
 
+    # Helper: normalize a value (list/tuple/set/other) -> flat list of strings
+    def normalize_to_list(val):
+        out = []
+        if val is None:
+            return out
+        if isinstance(val, (list, tuple, set)):
+            for v in val:
+                if v is None:
+                    continue
+                out.append(str(v))
+        else:
+            out.append(str(val))
+        return out
+
     for t in tables:
         candidate_cols = []
 
+        # Add WHERE/filter columns that reference this table (or generic filters)
         for c in where_cols:
-            if "." in c:
-                table_part, col_part = c.split(".", 1)
-                if table_part.lower() == t.lower():
-                    candidate_cols.append(col_part)
-            else:
-                candidate_cols.append(c)
+            normalized = normalize_to_list(c)
+            for nc in normalized:
+                # if parser returned "table.col" form
+                if "." in nc:
+                    table_part, col_part = nc.split(".", 1)
+                    if table_part.lower() == str(t).lower():
+                        candidate_cols.append(col_part)
+                else:
+                    candidate_cols.append(nc)
 
+        # Add common id/time columns if present in parsed columns
         for cc in ["id", "user_id", "created_at", "updated_at"]:
-            if cc in columns and cc not in candidate_cols:
+            # columns may be list of strings; ensure we compare strings
+            if any(str(col).lower() == cc for col in columns) and cc not in candidate_cols:
                 candidate_cols.append(cc)
 
-        candidate_cols = list(dict.fromkeys(candidate_cols))[:3]
+        # Flatten any nested items (safety) and convert everything to strings
+        flat_cols = []
+        for itm in candidate_cols:
+            flat_cols.extend(normalize_to_list(itm))
+
+        # Remove empty strings and deduplicate while preserving order
+        seen = set()
+        deduped = []
+        for x in flat_cols:
+            x_str = x.strip()
+            if not x_str:
+                continue
+            if x_str not in seen:
+                seen.add(x_str)
+                deduped.append(x_str)
+
+        # Limit to top-3 candidates
+        candidate_cols = deduped[:3]
 
         if candidate_cols:
             index_recs.append({"table": t, "columns": candidate_cols})
-            suggestions.append(f"Consider index on `{t}({', '.join(candidate_cols)})` for filtering and joins.")
+            suggestions.append(
+                f"Consider index on `{t}({', '.join(candidate_cols)})` for filtering and joins."
+            )
 
     return suggestions, index_recs
 
