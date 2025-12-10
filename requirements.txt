@@ -5,3 +5,8 @@ sqlglot
 pandas
 numpy
 openai>=1.0.0
+psycopg2-binary      # PostgreSQL
+mysql-connector-python
+snowflake-connector-python
+google-cloud-bigquery
+google-auth
